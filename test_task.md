@@ -52,6 +52,66 @@ IPMI является составной частью **BMC (Baseboard Managemen
 ![ipmi_sec](img/ipmi_sec.jpg)  
 Безопасность IPMI  
 
+#### 1.2.3 Подготовка IPMI для снятия метрик сервера  
+
+Для мониторинга оборудования сервера будем использовать prometheus-ipmi-exporter. Это специализированный экспортер для системы мониторинга Prometheus, предназначенный для сбора метрик аппаратного уровня серверов через протокол IPMI. Он позволяет получать данные о состоянии оборудования: температуре процессоров и дисков, уровне вентиляции, напряжении, состоянии питания и других параметрах, доступных через BMC. Экспортер не генерирует метрики сам по себе - он взаимодействует с утилитами вроде ipmitool, чтобы запрашивать и преобразовывать сырые данные IPMI в формат, понятный Prometheus.  
+
+Для установки prometheus-ipmi-exporter выполняем ```sudo dnf install -y ipmitool```. Затем переходим в директорию для установки и скачиваем актуальный релиз с GitHub. Например 1.6.2:  
+
+```sudo wget https://github.com/prometheus-community/ipmi_exporter/releases/download/v1.6.2/ipmi_exporter-1.6.2.linux-amd64.tar.gz```
+Распаковываем ```sudo tar -xzf ipmi_exporter-*.tar.gz```  
+```sudo mv ipmi_exporter-* ipmi_exporter```
+
+Для запуска создаём файл сервиса:  
+
+```ini
+[Unit]
+Description=Prometheus IPMI Exporter
+After=network.target
+
+[Service]
+Type=simple
+User=ipmi_exporter
+Group=ipmi_exporter
+ExecStart=/opt/ipmi_exporter/ipmi_exporter --config.file=/etc/ipmi_exporter/config.yml --web.listen-address=:9290
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```  
+
+Затем создаём пользователя, перезагружаем демон systemd и запускаем службу:
+
+- ```sudo useradd --system --shell /sbin/nologin --no-create-home ipmi_exporter```  
+
+- ```sudo systemctl daemon-reload```  
+
+- ```sudo systemctl enable --now ipmi_exporter```  
+
+Пример базового конфига будет выглядеть следующим образом:
+
+- ```sudo mkdir -p /etc/ipmi_exporter```
+- ```sudo nano /etc/ipmi_exporter/config.yml```  
+
+```yml
+collectors:
+  - bmc
+  - ipmi
+  - dcmi
+  - chassis
+
+log:
+  level: info
+  format: logfmt
+
+web:
+  listen-address: ":9290"
+  telemetry-path: "/metrics"
+```
+
+
+
 ### 1.3 Настройка RAID-контроллера сервера, создание RAID-массива.  
 **RAID (Redundant Array of Independent Disks)** - это технология, объединяющая несколько дисков в один логический том. Для операционной системы и пользователя сервера такой массив выглядит как один диск.  
 
