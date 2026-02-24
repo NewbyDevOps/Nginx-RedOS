@@ -16,3 +16,348 @@
 
 **Цель** - получить работающий сервер, который управляется удалённо, показывает любую страницу и с которого мы получаем различные метрики.
 
+## 1. Настройка сервера на уровне железа.
+### 1.1 Подключение к интерфейсу управления сервером
+Существует много разных производителей серверов, у которых свои названия фирменных интерфейсов и утилит для управления сервером, но принципы настройки и функционал инструментов везде очень похож.  
+Предположим, что у нас сервер фирмы Supermicro, он уже подключён к серверной сети и ему выдан ip адрес по которому можно зайти на интерфейс IPMI для дальнейшего управления.  
+
+![IPMI interface](img/ipmi_supermicro.jpg)  
+Пример разъемов сервера Supermicro
+
+**IPMI (Intelligent Platform Management Interface)** — это аппаратный интерфейс для удаленного управления сервером «вне зависимости от его основной операционной системы». Это основной интерфейс управления всеми системами сервера (питание, доступ к консоли KVM-over-IP, монтирование образов, мониторинг аппаратной части сервера и т.д.). Так же, в зависимости от производителя оборудования, этот интерфейс может иметь другое название, но суть его та же - управление сервером.  
+
+IPMI является составной частью **BMC (Baseboard Management Controller)** контроллера который, в свою очередь, представляет собой отдельный независимый микрокомпьютер в сервере.
+
+Узнать ip адрес IPMI для сервера Supermicro можно следующими способами:
+- При перезагрузке сервера. Во время начальной загрузки (POST) на экране отображается системная информация. Среди прочего, там будет указан и IP-адрес, который BMC получил по DHCP или который был задан вручную.
+- В операционной системе. Если есть доступ к ОС сервера, можно использовать специальные утилиты. В Linux это команда ipmitool lan print, а в Windows — фирменная утилита Supermicro IPMICFG с командой ipmicfg -m.
+
+Узнали ip, открываем браузер, вбиваем ip и попадаем на страницу входа в веб-интерфейс IPMI. Для первого входа в IPMI Supermicro используются стандартные учетные данные 
+- Логин: ADMIN
+- Пароль: ADMIN  
+
+На современных серверах Supermicro (примерно с 2020 года) производитель перестал использовать единый стандартный пароль. Вместо этого каждый сервер поставляется с уникальным паролем, который указан на наклейке на корпусе или материнской плате.
+
+### 1.2 Базовая настройка IPMI: сеть, пользователи и безопасность
+#### 1.2.1 Настройка выделенного IP-адреса  
+По умолчанию BMC пытается получить IP-адрес по DHCP. Это ненадежно, так как адрес может измениться после перезагрузки сетевого оборудования, и доступ будет потерян. Рекомендуется сразу задать статический IP.
+
+Для этого в веб-интерфейсе переходим в раздел **Configuration -> Network**. Меняем **IP Address Source** с **DHCP** на **Static** и вводим нужные сетевые реквизиты: IP-адрес, маску подсети и шлюз.
+
+#### 1.2.2 Смена пароля по умолчанию и управление пользователями  
+Если был установлен стандартный пароль для входа IPMI, то его необходимо сменить.
+Это делается в разделе **Configuration -> Users**. Выбираем пользователя ADMIN, нажимаем Modify User и задаем новый, сложный пароль. Здесь же можно создать дополнительных пользователей IPMI с ограниченными правами, например, User (только просмотр) или Operator (может управлять питанием, но не менять настройки).  
+Безопасность интерфейса IPMI очень важна т.к. он позволяет управлять всеми системами сервера.
+
+![ipmi_sec](img/ipmi_sec.jpg)  
+Безопасность IPMI  
+
+### 1.3 Настройка RAID-контроллера сервера, создание RAID-массива.  
+**RAID (Redundant Array of Independent Disks)** - это технология, объединяющая несколько дисков в один логический том. Для операционной системы и пользователя сервера такой массив выглядит как один диск.  
+
+![raid](img/raid.jpg)  
+Пример соединения в RAID-массив  
+
+Выбор режима RAID зависит от задач, бюджета и требований к отказоустойчивости. RAID 0 дает максимальную скорость, но не защищает от сбоев. RAID 1 создает полную копию данных (зеркало) и гарантирует высокую надежность. RAID 5 и RAID 6 — сбалансированное решение для скорости, объема и защиты, выдерживая отказ одного и двух дисков соответственно. RAID 10 совмещает скорость RAID 0 и надежность RAID 1, что делает его отличным выбором для высоконагруженных систем.  
+
+Т.к. по заданию у нас 2 диска, то я выберу вариант RAID 1 как оптимальный для работы web-сервера.  
+
+Для примера я рассмотрю настройку RAID-массива на популярных аппаратных контроллерах LSI/Broadcom, которые стали стандартом для производительных серверов Supermicro.  
+
+#### 1.3.1 Вход в утилиту конфигурации WebBIOS/MegaRAID  
+
+Чтобы получить доступ к утилите настройки, нужно войти в нее во время загрузки сервера. Сразу после включения необходимо следить за экраном самотестирования (POST). В определенный момент появится сообщение от RAID-контроллера с предложением нажать комбинацию клавиш:
+
+- **Ctrl+H** - для входа в графическую утилиту WebBIOS.
+- **Ctrl+R** - для входа в текстовую утилиту MegaRAID.  
+
+Для входа нужно быстро нажать, как только появится подсказка на экране.  
+
+![raid_enter](img/raid_enter.jpg)  
+Пример экрана для входа в настройки RAID  
+
+#### 1.3.2 Создание нового массива (Virtual Drive) через Configuration Wizard  
+
+Самый простой способ создать массив - использовать мастер настройки (Configuration Wizard). Для этого необходимо:  
+
+- Запустить Configuration Wizard из главного меню
+- Выбрать New Configuration. Если мастер предложит автоматическую или ручную настройку, выбирайте Manual Configuration для полного контроля
+- На экране выбора дисков отметить накопители, которые войдут в массив
+- На следующем шаге выбрать нужный RAID Level (RAID 1)
+- Задать параметры массива. Stripe Size (размер страйпа) можно оставить по умолчанию. Write Policy (политика записи) лучше установить в Write Back для высокой производительности, если у контроллера есть батарея (BBU)
+- Сохранить конфигурацию и подтвердить создание виртуального диска (Virtual Drive)  
+
+![raid_create](img/raid_create.jpg)  
+Создание RAID-массива в Configuration Wizard  
+
+#### 1.3.3 Инициализация массива и проверка статуса  
+После создания массива его нужно инициализировать. Этот процесс готовит диски к работе. Будет предложено два варианта:
+
+- **Fast Initialize** - быстрая инициализация, занимает несколько секунд. Подходит для большинства случаев
+- **Full Initialize** - полная инициализация с проверкой поверхности дисков. Занимает много времени, но выявляет сбойные сектора.
+После завершения необходимо убедиться, что статус нового массива - **Optimal**. Это означает, что настроенный RAID исправен и готов к работе
+
+## 2 Установка RedOS и базовые настройки.
+Для установки linux RedOS на сервер Supermicro рекомендуется использовать **Java iKVM Viewer**. Для этого нужно скачать и установить Java, затем запусить Java iKVM Viewer, откроется окно с текущим состоянием сервера.
+Затем скачиваем образ RedOS и устанавливаем на сервер.  
+Я буду делать установку RedOS на виртуалке VirtualBox.
+
+После установки ОС необходимо сделать следующие подготовительные работы:  
+- Создать пользователя и добавить его в группу wheel чтобы не использовать root постоянно ```useradd -m -G wheel viktor```
+- Задать новому пользователю пароль ```passwd viktor```
+- Поменять название сервера на более понятное ```hostnamectl set-hostname serv-web-01```
+- Установить временную зону ```temedatectl set-timzone Asia/Novosibirsk```
+- Изменить порт SSH на другой, запретить вход под root, создать SSH ключ для пользователя под которым будем заходить.
+- Обновление пакетов системы ```dnf update```
+- Установить fail2ban для усиления безопасности
+
+## 3. Установка nginx и загрузка сайта с помощью Ansible.
+Роль для установки nginx и выгрузки сайта на сервер выглядит следующим образом.  
+
+![ansible_nginx](img/ansible_nginx.jpg)  
+Структура роли
+
+Файл **hosts.yml**:
+```yml
+---
+all:
+  hosts:
+    192.168.1.40:
+      ansible_user: viktor
+  vars:
+     ansible_ssh_private_key_file: /root/.ssh/id_ed25519
+```
+Файл **nginx_deploy.yml**:
+```yml
+---
+
+- name: Installation and configuration nginx
+  hosts: all
+
+  roles:
+    - nginx_deploy
+```
+
+Файл **defaults/main.yml**:
+```yml
+---
+# defaults file for nginx_deploy
+
+nginx_ver: 1:1.28.0-1.red80.x86_64
+```
+
+Файл **handlers/main.yml**:
+```yml
+---
+# handlers file for nginx_deploy
+
+- name: Start and enable nginx service
+  become: yes
+  service:
+    name: nginx
+    state: started
+    enabled: yes
+    
+```
+
+Файл **tasks/main.yml**:
+```yml
+---
+# tasks file for nginx_deploy
+
+# Install nginx
+
+- name: Install nginx
+  become: yes
+  yum:
+    name: "nginx-{{ nginx_ver }}"
+    update_cache: yes
+  notify:
+    - Start and enable nginx service
+
+- name: Ensure nginx is started and enabled
+  become: yes
+  service:
+    name: nginx
+    state: started
+    enabled: yes
+
+# Configuring firewalld for nginx
+- name: Start firewalld
+  become: yes
+  service:
+    name: firewalld
+    state: started
+    enabled: yes
+
+- name: Enable http service
+  become: yes
+  firewalld:
+    service: http
+    zone: public
+    permanent: true
+    state: enabled
+    immediate: yes
+
+- name: Enable https service
+  become: yes
+  firewalld:
+    service: https
+    zone: public
+    permanent: true
+    state: enabled
+    immediate: yes
+```
+
+## 4. Установка и настройка системы мониторинга
+Для реализации системы мониторинга будут использоваться следующие компоненты:  
+**На удалённом сервере (192.168.1.40):**  
+- nginx-prometheus-exporter_1.5.1_linux_amd64
+- prometheus-node_exporter-1.10.2-2.red80.x86_64  
+
+**На машине для мониторинга (192.169.1.143):**  
+- golang-github-prometheus-3.6.0-1.red80.x86_64
+- grafana-12.3.1-1.red80.x86_64  
+
+Ниже изображена блок схема взаимодействия компонентов системы мониторинга.
+
+![monitoring](img/monitoring.jpg)  
+Система мониторинга
+
+- **Nginx Web Server** - это наш веб-сервер который нужно мониторить
+- **Nginx Exporter** - собирает метрики с Nginx (порт 9113)
+- **Node Exporter** - собирает системные метрики (порт 9100)
+
+- **Prometheux Server** - центральный сервер для сбора метрик (порт 9090)
+- **Grafana** - система визуализации данных (порт 3000)
+- **Prometheus Database** - база даных Prometheus
+
+### 4.1 Установка и настройка nginx-prometheus-exporter (Nginx Exporter)
+
+#### 4.1.1 Настройка Nginx
+Для того, чтобы Nginx мог отдавать метрики необходимо отредактировать файл ```/etc/nginx/nginx.conf```, добавив в ```server``` блок нужную локаци:  
+
+```nginx
+location /nginx_status {
+    stub_status on;
+    access_log off;
+    allow 127.0.0.1;
+    deny all;
+}
+```
+Перезагружаем конфигурацию nginx командой ```sudo systemctl reload nginx```.
+Проверяем есть ли страница статуса nginx командой ```curl http://localhost/nginx_status```.  
+
+![stab_module](img/stab_module.jpg)  
+Вывод статуса Nginx  
+
+#### 4.1.2 Установка и настройка nginx-prometheus-exporter  
+
+- Скачиваем модуль командой ```wget https://github.com/nginx/nginx-prometheus-exporter/releases/download/v1.5.1/nginx-prometheus-exporter_1.5.1_linux_amd64.tar.gz```  
+- Извлекаем из архива командой ```tar xvf nginx-prometheus-exporter_1.5.1_linux_amd64.tar.gz```  
+
+- Копируем бинарный файл в каталог для программ, устанавливаемых вручную командой ```sudo cp ~/nginx-prometheus-exporter_1.5.1_linux_amd64/nginx-prometheus-exporter /usr/local/bin/```  
+
+- Создаём сервис **nginx_exporter.service**
+  - ```nano /etc/systemd/system/nginx_exporter.service```
+  - Добавляем данные для unit и сохраняем  
+```ini
+[Unit]
+Description=NGINX Prometheus Exporter
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/nginx-prometheus-exporter \
+    --nginx.scrape-uri http://127.0.0.1/nginx_status
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+- Перезапускаем конфигурацию systemd, запускаем наш unit, добавляем в автозагрузку командами
+  - ```systemctl daemon-reload```
+  - ```systemctl start nginx_exporter```
+  - ```systemctl enable nginx_exporter```
+
+- Проверяем есть ли метрики командой ```curl http://127.0.0.1:9113/metrics```
+
+- Открываем порт для сервиса командами
+  - ```sudo firewall-cmd --permanent --add-port=9113/tcp```
+  - ```sudo systemctl restart firewalld```
+
+### 4.2 Установка и настройка Node Exporter  
+Устанавливаем и настраиваем компонент с помощью команд:
+- ```sudo useradd -rs /bin/false nodeusr```
+- ```sudo dnf install prometheus-node_exporter```
+- ```sudo systemctl enable node_exporter --now```
+- ```sudo systemctl status node_exporter```
+- ```sudo firewall-cmd --permanent --add-port=9100/tcp```
+- ```sudo systemctl restart firewalld```  
+
+Проверяем есть ли метрики командой ```curl http://127.0.0.1:9100/metrics```  
+
+### 4.3 Установка и настройка Prometheus на хосте для мониторинга  
+
+Устанавливаем Prometheus командами:  
+
+- ```sudo dnf install golang-github-prometheus```
+- ```sudo systemctl enable prometheus --now```
+- ```sudo systemctl status prometheus```
+
+Настраиваем Prometheus для сбора метрик. Для этого открываем и редактируем файл **/etc/prometheus/prometheus.yml**. Добавляем конфиг для сбора метрик с сервера:  
+
+- Интервал для сбора метрик делаем 5 сек
+```yml
+global:
+  scrape_interval: 5s 
+  evaluation_interval: 5s 
+```  
+- Прописываем адреса сервера для сбора метрик
+```yml
+scrape_configs:
+  - job_name: 'node' # Метрики сервера
+    static_configs:
+      - targets: ['192.168.1.40:9100'] # Адрес сервера с Node Exporter
+
+  - job_name: 'nginx' # Метрики Nginx
+    static_configs:
+      - targets: ['192.168.1.40:9113'] # Адрес сервера с Nginx Exporter
+```
+Перезагружаем конфигурацию Prometheus командой ```sudo systemctl reload prometheus```.  
+Проверяем статус таргетов в браузере хоста для мониторинга на странице **http://192.168.1.143:9090/targets**. Статус должен быть в состоянии **UP**.  
+
+![prometheus_targets](img/prometheus_targets.jpg)  
+Состояние таргетов Prometheus  
+
+### 4.4 Установка и настройка Grafana на хосте для мониторинга  
+
+#### 4.4.1 Устанавливаем Grafana командами:  
+
+- ```sudo dnf install grafana```
+- ```sudo systemctl enable grafana-server --now```
+- ```sudo systemctl status grafana-server```  
+
+Grafana должна быть доступна на порту **3000** хоста для мониторинга. Проверяем:  
+![grafana_start](img/grafana_start.jpg)  
+
+Пароль и логин для входа по умолчанию **admin**/**admin**. Для безопасности пароль необходимо сменить на более надёжный.  
+
+После входа в Grafana переходим в **Connections -> Data Sources -> Add new data source**. Выбираем **Prometheus**, в поле **Prometheus server URL** вводим **http://localhost:9090**. Внизу, на той же странице нажимаем **Save & Test**, должно появиться сообщение об успешном подключении к Prometheus:  
+
+![grafana_conf](img/grafana_conf.jpg)  
+Сохранение настроек и тест подключения к Prometheus  
+
+#### 4.4.2 Установка дашбордов  
+
+Заходим в **Dashboards -> Import**, в поле **Find and import dashboards for common applications at grafana.com/dashboards** вводим номер нужно дашборда и нажимаем **Load**.  
+
+![grafana_dash](img/grafana_dash.jpg)  
+
+Я выбрал самые популярные дашборды **12708** для Nginx и **1860** для Node Exporter.  
+
+![grafana_nginx](img/grafana_nginx.jpg)  
+Дашборд 12708 для Nginx  
+
+![grafana_node](img/grafana_node.jpg)  
+Дашборд 1860 для Node Exporter  
+
