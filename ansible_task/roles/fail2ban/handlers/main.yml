@@ -1,0 +1,15 @@
+---
+# handlers file for fail2ban
+
+- name: Start and enable fail2ban service
+  become: yes
+  service:
+    name: fail2ban
+    state: started
+    enabled: yes
+
+- name: Reload fail2ban service
+  become: yes
+  service:
+    name: fail2ban
+    state: reloaded

@@ -1,0 +1,19 @@
+---
+# Tasks file for installation file2ban to RedOs based OS family
+
+- name: Install fail2ban for RedHat
+  become: yes
+  yum:
+    name: "fail2ban-{{ version_for_redos }}"     # 1.1.0-4.red80
+    update_cache: yes
+  notify:
+    - Start and enable fail2ban service
+
+- name: Write jail.local file with var
+  become: yes
+  template:
+    src: jail.j2
+    dest: /etc/fail2ban/jail.local
+    mode: 0555
+  notify:
+      - Reload fail2ban service

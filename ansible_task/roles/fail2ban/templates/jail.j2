@@ -1,0 +1,25 @@
+[DEFAULT]
+bantime  = {{ bantime_d }}
+findtime = {{ findtime_d }}
+maxretry = {{ maxretry_d }}
+
+ignoreip = {{ ignoreip_d }}
+
+# Advanced parameters
+bantime.increment = {{ bantime_increment_d }}
+
+[sshd]
+enabled = {{ enabled_sshd }}
+port = ssh
+logpath = /var/log/secure
+backend = systemd
+
+{% if enabled_recidive == true %}
+[recidive]
+enabled = true
+bantime = {{ bantime_recidive }}
+findtime = {{ findtime_recidive }}
+maxretry = {{ maxretry_recidive }}
+logpath = /var/log/fail2ban.log
+backend = auto
+{% endif %}
