@@ -331,7 +331,7 @@ net.ipv4.tcp_syncookies = 1 # Защита от SYN-флуд атак
 
 ## 4. Установка и настройка системы мониторинга
 Для реализации системы мониторинга будут использоваться следующие компоненты:  
-**На удалённом сервере (192.168.1.40):**  
+**На удалённом сервере (192.168.1.150):**  
 - nginx-prometheus-exporter_1.5.1_linux_amd64
 - prometheus-node_exporter-1.10.2-2.red80.x86_64  
 
@@ -437,11 +437,11 @@ global:
 scrape_configs:
   - job_name: 'node' # Метрики сервера
     static_configs:
-      - targets: ['192.168.1.40:9100'] # Адрес сервера с Node Exporter
+      - targets: ['192.168.1.150:9100'] # Адрес сервера с Node Exporter
 
   - job_name: 'nginx' # Метрики Nginx
     static_configs:
-      - targets: ['192.168.1.40:9113'] # Адрес сервера с Nginx Exporter
+      - targets: ['192.168.1.150:9113'] # Адрес сервера с Nginx Exporter
 ```
 Перезагружаем конфигурацию Prometheus командой ```sudo systemctl reload prometheus```.  
 Проверяем статус таргетов в браузере хоста для мониторинга на странице **http://192.168.1.143:9090/targets**. Статус должен быть в состоянии **UP**.  
